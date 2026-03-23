@@ -85,6 +85,20 @@ cd "$REPO_DIR"
 # ── Step 2: build ─────────────────────────────────────────────────────────────
 section "Step 2/4  Build"
 
+# Check Node version — must be >= 22.16.0
+_node_ver="$(node --version 2>/dev/null | sed 's/^v//' || echo "0")"
+_node_major="$(echo "$_node_ver" | cut -d. -f1)"
+if [[ "$_node_major" -lt 22 ]]; then
+    err "Node.js >= 22.16.0 is required (you have v${_node_ver})"
+    err ""
+    err "Upgrade Node then re-run this script:"
+    err "  nvm install 22 && nvm use 22   # if you use nvm"
+    err "  fnm install 22 && fnm use 22   # if you use fnm"
+    err "  https://nodejs.org/en/download  # direct download"
+    exit 1
+fi
+ok "Node v${_node_ver}"
+
 # Ensure pnpm is available
 if ! command -v pnpm &>/dev/null; then
     warn "pnpm not found — installing via npm …"
@@ -95,13 +109,13 @@ if ! command -v pnpm &>/dev/null; then
     hash -r 2>/dev/null || true
 fi
 
-say "pnpm install …"
-pnpm install --frozen-lockfile
+say "pnpm install …  (this may take a minute)"
+pnpm install --frozen-lockfile --ignore-scripts=false
 
-say "pnpm ui:build  (auto-installs UI deps on first run) …"
+say "pnpm ui:build …  (installs UI deps + Vite build, may take a minute)"
 pnpm ui:build
 
-say "pnpm build …"
+say "pnpm build …  (TypeScript compile + bundle)"
 pnpm build
 
 ok "Build complete"
