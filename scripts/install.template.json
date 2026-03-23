@@ -1,0 +1,193 @@
+{
+  "_readme": [
+    "HOW TO USE",
+    "  1. Copy this file:  cp scripts/install.template.json install.json",
+    "  2. Fill in REQUIRED fields (marked REQUIRED below).",
+    "  3. Run:             bash scripts/easy-install.sh",
+    "  That's it — openclaw installs, onboards, configures your AI provider,",
+    "  adds channels, installs plugins, and sets up the dev agent automatically."
+  ],
+
+  "install": {
+    "_doc": "How openclaw is installed. 'pnpm' and 'npm' install the published package globally. 'git' clones and builds from source.",
+    "method": "pnpm",
+    "_method_options": "pnpm | npm | git",
+    "version": "latest",
+    "_version_hint": "A dist-tag (latest, next, beta) or exact semver. Use 'main' for the git HEAD build.",
+    "beta": false
+  },
+
+  "onboard": {
+    "_doc": "Controls the openclaw onboard wizard. All options here map directly to 'openclaw onboard --non-interactive' flags.",
+
+    "flow": "quickstart",
+    "_flow_options": "quickstart (sensible defaults, fastest) | manual (full control over every setting)",
+
+    "skip_skills": true,
+    "_skip_skills_hint": "Set false to configure skill integrations during onboard.",
+
+    "skip_search": true,
+    "_skip_search_hint": "Set false to configure a web-search provider during onboard.",
+
+    "skip_health": false,
+    "_skip_health_hint": "Set true to skip the post-onboard gateway health probe (useful in headless/CI environments).",
+
+    "skip_ui": true,
+    "_skip_ui_hint": "Set false to open the web control UI in a browser after onboard.",
+
+    "install_daemon": true,
+    "_install_daemon_hint": "Install openclaw as a system service (systemd on Linux, launchd on macOS) so it starts on boot.",
+
+    "gateway": {
+      "_doc": "Gateway server settings. The gateway is the local server that connects OpenClaw to your channels and AI provider.",
+
+      "port": 19000,
+      "_port_hint": "TCP port the gateway listens on. Default 19000.",
+
+      "bind": "loopback",
+      "_bind_options": "loopback (localhost only, most secure) | lan (local network) | auto | tailnet | custom",
+
+      "auth_mode": "token",
+      "_auth_mode_options": "token (recommended) | password | none | trusted-proxy",
+
+      "token": "",
+      "_token_hint": "REQUIRED if auth_mode=token. A random secret string. Leave blank and the script generates one for you. Keep it safe — it is the password to your gateway.",
+
+      "password": "",
+      "_password_hint": "Used only when auth_mode=password."
+    }
+  },
+
+  "ai_provider": {
+    "_doc": "The AI model backend. Pick a provider, set the auth_choice that matches, and fill in api_key.",
+
+    "auth_choice": "openai-api-key",
+    "_auth_choice_options": [
+      "openai-api-key       → OpenAI (api_key = sk-...)",
+      "anthropic            → Anthropic Claude (api_key = your Anthropic key)",
+      "gemini-api-key       → Google Gemini (api_key = your Gemini key)",
+      "mistral-api-key      → Mistral (api_key = your Mistral key)",
+      "openrouter-api-key   → OpenRouter (api_key = sk-or-...)",
+      "xai-api-key          → xAI / Grok (api_key = xai-...)",
+      "github-copilot       → GitHub Copilot (no api_key needed, OAuth flow)",
+      "ollama               → Local Ollama (no api_key needed; set ollama_base_url)",
+      "custom-api-key       → OpenAI-compatible endpoint (fill custom_* fields)",
+      "opencode-zen         → OpenCode Zen (api_key = your key)",
+      "kilocode-api-key     → Kilocode (api_key = your key)",
+      "skip                 → Skip AI setup for now"
+    ],
+
+    "api_key": "",
+    "_api_key_hint": "REQUIRED for most providers. Your API key for the selected provider.",
+
+    "model": "",
+    "_model_hint": "Optional. Override the default model. Examples: gpt-4o, claude-3-7-sonnet-20250219, gemini-2.0-flash, mistral-large-latest",
+
+    "ollama_base_url": "http://localhost:11434",
+    "_ollama_base_url_hint": "Only used when auth_choice=ollama. URL of your local Ollama server.",
+
+    "custom_base_url": "",
+    "_custom_base_url_hint": "Only used when auth_choice=custom-api-key. Base URL of the OpenAI-compatible API.",
+
+    "custom_provider_id": "",
+    "_custom_provider_id_hint": "Only used when auth_choice=custom-api-key. A short id for this provider, e.g. my-llm.",
+
+    "custom_model_id": "",
+    "_custom_model_id_hint": "Only used when auth_choice=custom-api-key. The model name to pass in requests.",
+
+    "custom_compatibility": "openai",
+    "_custom_compatibility_options": "openai | anthropic"
+  },
+
+  "channels": {
+    "_doc": "Messaging channel connections. Set enabled=true and fill in credentials for each channel you want to use. Channels are added via 'openclaw channels add' after onboarding.",
+
+    "telegram": {
+      "enabled": false,
+      "_enabled_hint": "Set to true to enable this channel.",
+      "bot_token": "",
+      "_bot_token_hint": "REQUIRED. Get from @BotFather on Telegram: /newbot. Looks like 1234567890:ABCdef...",
+      "dm_policy": "pairing",
+      "_dm_policy_options": "pairing (users must pair first, recommended) | allowlist | open | disabled"
+    },
+
+    "discord": {
+      "enabled": false,
+      "bot_token": "",
+      "_bot_token_hint": "REQUIRED. From Discord Developer Portal → Your App → Bot → Token.",
+      "dm_policy": "pairing",
+      "_dm_policy_options": "pairing | allowlist | open | disabled"
+    },
+
+    "slack": {
+      "enabled": false,
+      "bot_token": "",
+      "_bot_token_hint": "REQUIRED. From Slack App config → OAuth & Permissions → Bot User OAuth Token (xoxb-...).",
+      "app_token": "",
+      "_app_token_hint": "REQUIRED. From Slack App config → Basic Information → App-Level Tokens (xapp-...). Needs connections:write scope."
+    },
+
+    "signal": {
+      "enabled": false,
+      "number": "",
+      "_number_hint": "REQUIRED. Phone number linked to Signal, e.g. +12025551234.",
+      "http_url": "http://localhost:8080",
+      "_http_url_hint": "URL of your signal-cli REST API server."
+    },
+
+    "matrix": {
+      "enabled": false,
+      "homeserver": "",
+      "_homeserver_hint": "REQUIRED. Your Matrix homeserver URL, e.g. https://matrix.org.",
+      "user_id": "",
+      "_user_id_hint": "REQUIRED. Bot user ID, e.g. @mybot:matrix.org.",
+      "access_token": "",
+      "_access_token_hint": "REQUIRED. Access token for the bot account."
+    }
+  },
+
+  "plugins": {
+    "_doc": "Plugins (extensions) to install and enable. 'install' accepts npm package names, local paths, or marketplace names. Installing a plugin also approves it. 'enable' enables already-installed plugins by id.",
+    "install": [],
+    "_install_hint": "Examples: ['@openclaw/my-plugin', './path/to/local-plugin', 'some-marketplace-plugin']",
+    "enable": [],
+    "_enable_hint": "Plugin ids to enable (must already be installed). Example: ['discord', 'openai', 'brave']"
+  },
+
+  "dev_agent": {
+    "_doc": "The AI Dev Agent — polls Jira for tickets, writes code, opens Bitbucket PRs. Set enabled=true to activate.",
+    "enabled": false,
+    "name": "My Dev Agent",
+    "poll_interval_ms": 300000,
+    "_poll_interval_hint": "How often (ms) to poll Jira. 300000 = 5 minutes.",
+
+    "behavior_md": "",
+    "_behavior_md_hint": "Optional. Markdown rules injected as the agent's system prompt. Leave blank to use the built-in default.",
+
+    "jira": {
+      "_doc": "Get your API token at: https://id.atlassian.com/manage-profile/security/api-tokens",
+      "host": "",
+      "_host_example": "https://yourorg.atlassian.net",
+      "email": "",
+      "api_token": "",
+      "project_key": "",
+      "_project_key_hint": "Optional. Filter to one project, e.g. PROJ. Leave blank to watch all assigned tickets.",
+      "max_tickets": 1
+    },
+
+    "bitbucket": {
+      "_doc": "Create an App Password at Bitbucket → Settings → App passwords with: Repositories Read+Write, Pull requests Read+Write.",
+      "username": "",
+      "app_password": "",
+      "workspace": "",
+      "_workspace_hint": "The slug from bitbucket.org/{workspace}.",
+      "repo": "",
+      "base_url": "",
+      "_base_url_hint": "Leave blank for default: https://api.bitbucket.org/2.0"
+    },
+
+    "git": {
+      "default_branch": "main"
+    }
+  }
+}

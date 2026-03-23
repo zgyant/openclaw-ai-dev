@@ -26,6 +26,10 @@ packages/dashboard-next/out/
 # Mise configuration files
 mise.toml
 
+# Personal install config (contains API keys — never commit)
+scripts/install.json
+install.json
+
 # Android build artifacts
 apps/android/.gradle/
 apps/android/app/build/
