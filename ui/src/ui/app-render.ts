@@ -55,6 +55,17 @@ import {
 } from "./controllers/cron.ts";
 import { loadDebug, callDebugMethod } from "./controllers/debug.ts";
 import {
+  createDevAgent,
+  deleteDevAgent,
+  loadDevAgentLogs,
+  loadDevAgents,
+  pauseDevAgent,
+  resumeDevAgent,
+  startDevAgent,
+  stopDevAgent,
+  updateDevAgent,
+} from "./controllers/dev-agents.ts";
+import {
   approveDevicePairing,
   loadDevices,
   rejectDevicePairing,
@@ -78,8 +89,8 @@ import {
   updateSkillEdit,
   updateSkillEnabled,
 } from "./controllers/skills.ts";
-import "./components/dashboard-header.ts";
 import { buildExternalLinkRel, EXTERNAL_LINK_TARGET } from "./external-link.ts";
+import "./components/dashboard-header.ts";
 import { icons } from "./icons.ts";
 import { normalizeBasePath, TAB_GROUPS, subtitleForTab, titleForTab } from "./navigation.ts";
 import { agentLogoUrl } from "./views/agents-utils.ts";
@@ -93,6 +104,7 @@ import {
 import { renderChat } from "./views/chat.ts";
 import { renderCommandPalette } from "./views/command-palette.ts";
 import { renderConfig } from "./views/config.ts";
+import { defaultDevAgentsForm, devAgentsFormToParams } from "./views/dev-agents.ts";
 import { renderExecApprovalPrompt } from "./views/exec-approval.ts";
 import { renderGatewayUrlConfirmation } from "./views/gateway-url-confirmation.ts";
 import { renderLoginGate } from "./views/login-gate.ts";
@@ -125,6 +137,7 @@ const lazyAgents = createLazy(() => import("./views/agents.ts"));
 const lazyChannels = createLazy(() => import("./views/channels.ts"));
 const lazyCron = createLazy(() => import("./views/cron.ts"));
 const lazyDebug = createLazy(() => import("./views/debug.ts"));
+const lazyDevAgents = createLazy(() => import("./views/dev-agents.ts"));
 const lazyInstances = createLazy(() => import("./views/instances.ts"));
 const lazyLogs = createLazy(() => import("./views/logs.ts"));
 const lazyNodes = createLazy(() => import("./views/nodes.ts"));
@@ -1367,6 +1380,91 @@ export function renderApp(state: AppViewState) {
                         : { kind: "gateway" as const };
                     return saveExecApprovals(state, target);
                   },
+                }),
+              )
+            : nothing
+        }
+
+        ${
+          state.tab === "devAgents"
+            ? lazyRender(lazyDevAgents, (m) =>
+                m.renderDevAgents({
+                  loading: state.devAgentsLoading,
+                  error: state.devAgentsError,
+                  instances: state.devAgentsList,
+                  selectedId: state.devAgentsSelectedId,
+                  activePanel: state.devAgentsPanel,
+                  logs: state.devAgentsLogs,
+                  logsLoading: state.devAgentsLogsLoading,
+                  busy: state.devAgentsBusy,
+                  busyId: state.devAgentsBusyId,
+                  form: state.devAgentsForm,
+                  isCreating: state.devAgentsIsCreating,
+                  saveError: state.devAgentsSaveError,
+                  onRefresh: () => loadDevAgents(state),
+                  onSelectInstance: (id) => {
+                    state.devAgentsSelectedId = id;
+                    state.devAgentsPanel = "config";
+                    state.devAgentsIsCreating = false;
+                    const inst = (state.devAgentsList ?? []).find((i) => i.id === id);
+                    state.devAgentsForm = inst ? defaultDevAgentsForm(inst) : null;
+                    state.devAgentsSaveError = null;
+                  },
+                  onSelectPanel: (panel) => {
+                    state.devAgentsPanel = panel;
+                  },
+                  onStartNew: () => {
+                    state.devAgentsIsCreating = true;
+                    state.devAgentsForm = defaultDevAgentsForm();
+                    state.devAgentsSaveError = null;
+                    state.devAgentsSelectedId = null;
+                  },
+                  onCancelNew: () => {
+                    state.devAgentsIsCreating = false;
+                    state.devAgentsForm = null;
+                    state.devAgentsSaveError = null;
+                    state.devAgentsSelectedId = state.devAgentsList?.[0]?.id ?? null;
+                  },
+                  onFormChange: (field, value) => {
+                    if (!state.devAgentsForm) {
+                      return;
+                    }
+                    state.devAgentsForm = { ...state.devAgentsForm, [field]: value };
+                  },
+                  onSaveForm: async () => {
+                    const form = state.devAgentsForm;
+                    if (!form) {
+                      return;
+                    }
+                    state.devAgentsSaveError = null;
+                    const params = devAgentsFormToParams(form);
+                    if (state.devAgentsIsCreating) {
+                      const inst = await createDevAgent(state, form.name, params);
+                      if (inst) {
+                        state.devAgentsIsCreating = false;
+                        state.devAgentsForm = defaultDevAgentsForm(inst);
+                        state.devAgentsSelectedId = inst.id;
+                      }
+                    } else if (state.devAgentsSelectedId) {
+                      const inst = await updateDevAgent(state, state.devAgentsSelectedId, {
+                        name: form.name,
+                        params,
+                      });
+                      if (inst) {
+                        state.devAgentsForm = defaultDevAgentsForm(inst);
+                      }
+                    }
+                  },
+                  onStart: (id) => void startDevAgent(state, id),
+                  onStop: (id) => void stopDevAgent(state, id),
+                  onPause: (id) => void pauseDevAgent(state, id),
+                  onResume: (id) => void resumeDevAgent(state, id),
+                  onDelete: async (id) => {
+                    await deleteDevAgent(state, id);
+                    const next = state.devAgentsList?.[0] ?? null;
+                    state.devAgentsForm = next ? defaultDevAgentsForm(next) : null;
+                  },
+                  onLoadLogs: (id) => void loadDevAgentLogs(state, id),
                 }),
               )
             : nothing

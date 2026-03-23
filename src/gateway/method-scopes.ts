@@ -79,6 +79,8 @@ const METHOD_SCOPE_GROUPS: Record<OperatorScope, readonly string[]> = {
     "cron.list",
     "cron.status",
     "cron.runs",
+    "dev-agents.list",
+    "dev-agents.logs",
     "gateway.identity.get",
     "system-presence",
     "last-heartbeat",
@@ -139,6 +141,13 @@ const METHOD_SCOPE_GROUPS: Record<OperatorScope, readonly string[]> = {
     "set-heartbeats",
     "system-event",
     "agents.files.set",
+    "dev-agents.create",
+    "dev-agents.update",
+    "dev-agents.delete",
+    "dev-agents.start",
+    "dev-agents.stop",
+    "dev-agents.pause",
+    "dev-agents.resume",
   ],
 };
 

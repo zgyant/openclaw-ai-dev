@@ -276,6 +276,20 @@ export class OpenClawApp extends LitElement {
   @state() agentSkillsReport: SkillStatusReport | null = null;
   @state() agentSkillsAgentId: string | null = null;
 
+  @state() devAgentsLoading = false;
+  @state() devAgentsError: string | null = null;
+  @state() devAgentsList: import("./controllers/dev-agents.ts").DevAgentInstance[] | null = null;
+  @state() devAgentsSelectedId: string | null = null;
+  @state() devAgentsLogs: Record<string, import("./controllers/dev-agents.ts").DevAgentLogEntry[]> =
+    {};
+  @state() devAgentsLogsLoading = false;
+  @state() devAgentsBusy = false;
+  @state() devAgentsBusyId: string | null = null;
+  @state() devAgentsPanel: "config" | "behavior" | "workflow" | "logs" = "config";
+  @state() devAgentsForm: import("./views/dev-agents.ts").DevAgentsFormState | null = null;
+  @state() devAgentsIsCreating = false;
+  @state() devAgentsSaveError: string | null = null;
+
   @state() sessionsLoading = false;
   @state() sessionsResult: SessionsListResult | null = null;
   @state() sessionsError: string | null = null;

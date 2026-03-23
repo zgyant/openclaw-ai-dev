@@ -15,6 +15,7 @@ import { loadChannels } from "./controllers/channels.ts";
 import { loadConfig, loadConfigSchema } from "./controllers/config.ts";
 import { loadCronJobs, loadCronRuns, loadCronStatus } from "./controllers/cron.ts";
 import { loadDebug } from "./controllers/debug.ts";
+import { loadDevAgents } from "./controllers/dev-agents.ts";
 import { loadDevices } from "./controllers/devices.ts";
 import { loadExecApprovals } from "./controllers/exec-approvals.ts";
 import { loadLogs } from "./controllers/logs.ts";
@@ -36,6 +37,7 @@ import { startThemeTransition, type ThemeTransitionContext } from "./theme-trans
 import { resolveTheme, type ResolvedTheme, type ThemeMode, type ThemeName } from "./theme.ts";
 import type { AgentsListResult, AttentionItem } from "./types.ts";
 import { resetChatViewState } from "./views/chat.ts";
+import { defaultDevAgentsForm } from "./views/dev-agents.ts";
 
 type SettingsHost = {
   settings: UiSettings;
@@ -262,6 +264,16 @@ export async function refreshActiveTab(host: SettingsHost) {
     await loadDevices(host as unknown as OpenClawApp);
     await loadConfig(host as unknown as OpenClawApp);
     await loadExecApprovals(host as unknown as OpenClawApp);
+  }
+  if (host.tab === "devAgents") {
+    await loadDevAgents(host as unknown as OpenClawApp);
+    const h = host as unknown as OpenClawApp;
+    if (h.devAgentsSelectedId && !h.devAgentsForm) {
+      const inst = (h.devAgentsList ?? []).find((i) => i.id === h.devAgentsSelectedId) ?? null;
+      if (inst) {
+        h.devAgentsForm = defaultDevAgentsForm(inst);
+      }
+    }
   }
   if (host.tab === "chat") {
     await refreshChat(host as unknown as Parameters<typeof refreshChat>[0]);

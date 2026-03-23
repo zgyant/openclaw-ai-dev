@@ -1,6 +1,7 @@
 import type { EventLogEntry } from "./app-events.ts";
 import type { CompactionStatus, FallbackStatus } from "./app-tool-stream.ts";
 import type { CronModelSuggestionsState, CronState } from "./controllers/cron.ts";
+import type { DevAgentInstance, DevAgentLogEntry } from "./controllers/dev-agents.ts";
 import type { DevicePairingList } from "./controllers/devices.ts";
 import type { ExecApprovalRequest } from "./controllers/exec-approval.ts";
 import type { ExecApprovalsFile, ExecApprovalsSnapshot } from "./controllers/exec-approvals.ts";
@@ -178,6 +179,18 @@ export type AppViewState = {
   agentSkillsError: string | null;
   agentSkillsReport: SkillStatusReport | null;
   agentSkillsAgentId: string | null;
+  devAgentsLoading: boolean;
+  devAgentsError: string | null;
+  devAgentsList: DevAgentInstance[] | null;
+  devAgentsSelectedId: string | null;
+  devAgentsLogs: Record<string, DevAgentLogEntry[]>;
+  devAgentsLogsLoading: boolean;
+  devAgentsBusy: boolean;
+  devAgentsBusyId: string | null;
+  devAgentsPanel: "config" | "behavior" | "workflow" | "logs";
+  devAgentsForm: import("./views/dev-agents.ts").DevAgentsFormState | null;
+  devAgentsIsCreating: boolean;
+  devAgentsSaveError: string | null;
   sessionsLoading: boolean;
   sessionsResult: SessionsListResult | null;
   sessionsError: string | null;

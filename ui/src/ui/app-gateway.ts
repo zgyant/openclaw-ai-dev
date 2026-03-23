@@ -18,6 +18,7 @@ import { loadAgents } from "./controllers/agents.ts";
 import { loadAssistantIdentity } from "./controllers/assistant-identity.ts";
 import { loadChatHistory } from "./controllers/chat.ts";
 import { handleChatEvent, type ChatEventPayload } from "./controllers/chat.ts";
+import type { DevAgentInstance, DevAgentLogEntry } from "./controllers/dev-agents.ts";
 import { loadDevices } from "./controllers/devices.ts";
 import type { ExecApprovalRequest } from "./controllers/exec-approval.ts";
 import {
@@ -409,6 +410,46 @@ function handleGatewayEventUnsafe(host: GatewayHost, evt: GatewayEventFrame) {
   if (evt.event === GATEWAY_EVENT_UPDATE_AVAILABLE) {
     const payload = evt.payload as GatewayUpdateAvailableEventPayload | undefined;
     host.updateAvailable = payload?.updateAvailable ?? null;
+  }
+
+  // Dev agent live events
+  if (evt.event === "dev-agents.status") {
+    const payload = evt.payload as { instanceId?: string; status?: string } | undefined;
+    if (payload?.instanceId && payload?.status) {
+      const devHost = host as unknown as {
+        devAgentsList: DevAgentInstance[] | null;
+      };
+      if (devHost.devAgentsList) {
+        devHost.devAgentsList = devHost.devAgentsList.map((inst) =>
+          inst.id === payload.instanceId
+            ? { ...inst, status: payload.status as DevAgentInstance["status"] }
+            : inst,
+        );
+      }
+    }
+    return;
+  }
+
+  if (evt.event === "dev-agents.log") {
+    const payload = evt.payload as { instanceId?: string; ts?: number; line?: string } | undefined;
+    if (payload?.instanceId && typeof payload.line === "string") {
+      const entry: DevAgentLogEntry = {
+        ts: typeof payload.ts === "number" ? payload.ts : Date.now(),
+        line: payload.line,
+      };
+      const devHost = host as unknown as {
+        devAgentsLogs: Record<string, DevAgentLogEntry[]>;
+        devAgentsSelectedId: string | null;
+        tab: string;
+      };
+      const existing = devHost.devAgentsLogs[payload.instanceId] ?? [];
+      const next = [...existing, entry];
+      if (next.length > 500) {
+        next.shift();
+      }
+      devHost.devAgentsLogs = { ...devHost.devAgentsLogs, [payload.instanceId]: next };
+    }
+    return;
   }
 }
 
