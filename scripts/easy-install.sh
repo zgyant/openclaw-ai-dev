@@ -15,11 +15,13 @@
 # to fill it in.
 #
 # Full setup order:
-#   1. Install openclaw (pnpm / npm / git)
-#   2. Run openclaw onboard --non-interactive with your config
-#   3. Add messaging channels (telegram, discord, slack, signal, matrix)
-#   4. Install and enable plugins
+#   1. git clone + pnpm install + pnpm ui:build + pnpm build  (source builds)
+#      OR  pnpm add -g / npm install -g  (package installs)
+#   2. pnpm openclaw onboard --install-daemon  (with flags auto-built from JSON)
+#   3. openclaw channels add  for each enabled channel
+#   4. openclaw plugins install / enable  for each listed plugin
 #   5. Configure the AI Dev Agent
+#   6. Print dev-loop command: pnpm gateway:watch
 
 set -euo pipefail
 
@@ -69,6 +71,7 @@ Usage:
 
 Options:
   --dry-run        Preview what would happen; make no changes
+  --no-build       Skip pnpm install / ui:build / build (source installs)
   --no-agent       Skip dev-agent configuration
   --no-channels    Skip messaging channel setup
   --no-plugins     Skip plugin install/enable
@@ -80,16 +83,19 @@ Config files (in scripts/ or current directory):
   install.template.json  Template with all fields and inline documentation
 
 Full setup flow:
-  1. Install openclaw  (pnpm add -g / npm install -g / git checkout)
-  2. openclaw onboard  --non-interactive (gateway, AI provider, daemon)
+  1. Build from source  (pnpm install + pnpm ui:build + pnpm build)
+     OR install package  (pnpm add -g / npm install -g)
+  2. pnpm openclaw onboard --install-daemon  (flags auto-built from install.json)
   3. openclaw channels add  for each enabled channel
   4. openclaw plugins install / enable  for each listed plugin
   5. Write dev-agent config to ~/.openclaw/dev-agent-instances.json
+  6. Print dev-loop command: pnpm gateway:watch
 EOF
 }
 
 # ── flags ─────────────────────────────────────────────────────────────────────
 DRY_RUN=0
+NO_BUILD=0
 NO_AGENT=0
 NO_CHANNELS=0
 NO_PLUGINS=0
@@ -99,6 +105,7 @@ HELP=0
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --dry-run)      DRY_RUN=1;      shift ;;
+        --no-build)     NO_BUILD=1;     shift ;;
         --no-agent)     NO_AGENT=1;     shift ;;
         --no-channels)  NO_CHANNELS=1;  shift ;;
         --no-plugins)   NO_PLUGINS=1;   shift ;;
@@ -287,7 +294,7 @@ say "Config : ${CONFIG_JSON}"
 # ── read all sections from JSON ───────────────────────────────────────────────
 
 # install
-INSTALL_METHOD="$(json_get "$CONFIG_JSON" "install.method" "pnpm")"
+INSTALL_METHOD="$(json_get "$CONFIG_JSON" "install.method" "source")"
 INSTALL_VERSION="$(json_get "$CONFIG_JSON" "install.version" "latest")"
 INSTALL_BETA="$(json_get "$CONFIG_JSON" "install.beta" "false")"
 
@@ -415,9 +422,13 @@ fi
 
 # ── show plan ─────────────────────────────────────────────────────────────────
 section "Step 3/4  Plan"
-say "Install method : ${INSTALL_METHOD}"
-say "Version        : ${INSTALL_VERSION}"
-[[ "$INSTALL_BETA" == "true" ]] && say "Channel        : beta"
+if [[ "$INSTALL_METHOD" == "source" || "$INSTALL_METHOD" == "git" ]]; then
+    say "Install method : source build (pnpm install + ui:build + build)"
+else
+    say "Install method : ${INSTALL_METHOD} (global package)"
+    say "Version        : ${INSTALL_VERSION}"
+    [[ "$INSTALL_BETA" == "true" ]] && say "Channel        : beta"
+fi
 say "Onboard flow   : ${ONBOARD_FLOW}"
 say "Gateway port   : ${GW_PORT}  bind=${GW_BIND}  auth=${GW_AUTH_MODE}"
 [[ "$ONBOARD_INSTALL_DAEMON" == "true" ]] && say "Daemon install : yes"
@@ -463,15 +474,62 @@ fi
 section "Step 4/4  Installing"
 # ─────────────────────────────────────────────────────────────────────────────
 
-# ── PART A: install openclaw ──────────────────────────────────────────────────
+# ── PART A: build / install openclaw ─────────────────────────────────────────
+
+# Detect the repo root: we may be running from inside the cloned repo already
+# (setup.sh cd'd into it before calling us), or the user ran us directly.
+REPO_ROOT=""
+_candidate_dir="$(cd "${SCRIPT_DIR}/.." 2>/dev/null && pwd || true)"
+if [[ -f "${_candidate_dir}/package.json" ]] && \
+   grep -q '"name"[[:space:]]*:[[:space:]]*"openclaw"' "${_candidate_dir}/package.json" 2>/dev/null; then
+    REPO_ROOT="$_candidate_dir"
+fi
+# Also check one level up from CWD
+if [[ -z "$REPO_ROOT" && -f "${PWD}/package.json" ]] && \
+   grep -q '"name"[[:space:]]*:[[:space:]]*"openclaw"' "${PWD}/package.json" 2>/dev/null; then
+    REPO_ROOT="$PWD"
+fi
+
+build_from_source() {
+    if [[ -z "$REPO_ROOT" ]]; then
+        err "Cannot find openclaw repo root. Make sure you are running this script from inside the cloned repository."
+        exit 1
+    fi
+
+    if [[ "$NO_BUILD" == "1" ]]; then
+        say "Skipping build (--no-build)"
+        return 0
+    fi
+
+    say "Building from source in: ${REPO_ROOT}"
+    cd "$REPO_ROOT"
+
+    # Ensure pnpm
+    if ! command -v pnpm &>/dev/null; then
+        warn "pnpm not found — installing via npm …"
+        npm install -g pnpm@10 2>/dev/null || {
+            err "Could not install pnpm. Install it manually: https://pnpm.io/installation"
+            exit 1
+        }
+        hash -r 2>/dev/null || true
+    fi
+
+    say "pnpm install …"
+    pnpm install --frozen-lockfile
+
+    say "pnpm ui:build  (auto-installs UI deps on first run) …"
+    pnpm ui:build
+
+    say "pnpm build …"
+    pnpm build
+
+    ok "Source build complete"
+}
+
 install_openclaw_package() {
-    if [[ "$INSTALL_METHOD" == "git" ]]; then
-        # git path: delegate entirely to install.sh
-        export OPENCLAW_INSTALL_METHOD="git"
-        export OPENCLAW_VERSION="$INSTALL_VERSION"
-        [[ "$VERBOSE" == "1" ]] && export OPENCLAW_VERBOSE=1
-        [[ "$INSTALL_BETA" == "true" ]] && export OPENCLAW_BETA=1
-        bash "$INSTALL_SH" --no-onboard ${VERBOSE:+--verbose} || return 1
+    # source / git path
+    if [[ "$INSTALL_METHOD" == "source" || "$INSTALL_METHOD" == "git" ]]; then
+        build_from_source
         return 0
     fi
 
@@ -520,7 +578,20 @@ for _attempt in 1 2; do
         OPENCLAW_BIN="$(command -v openclaw)"
         break
     fi
-    # Try to find it in common global bin dirs
+    # For source builds, prefer the local repo's pnpm-managed binary or openclaw.mjs
+    if [[ -n "$REPO_ROOT" ]]; then
+        _local_bin="${REPO_ROOT}/node_modules/.bin/openclaw"
+        _local_mjs="${REPO_ROOT}/openclaw.mjs"
+        if [[ -x "$_local_bin" ]]; then
+            OPENCLAW_BIN="$_local_bin"
+            break
+        elif [[ -f "$_local_mjs" ]]; then
+            # Wrap in a small shim so the rest of the script calls it uniformly
+            OPENCLAW_BIN="node ${_local_mjs}"
+            break
+        fi
+    fi
+    # Try common global bin dirs
     for _dir in \
         "$(pnpm bin -g 2>/dev/null || true)" \
         "$(npm bin -g 2>/dev/null || true)" \
@@ -544,11 +615,19 @@ fi
 
 ok "openclaw binary: ${OPENCLAW_BIN}"
 
-# ── PART B: openclaw onboard --non-interactive ────────────────────────────────
+# ── PART B: openclaw onboard --install-daemon ────────────────────────────────
 run_onboard() {
-    say "Running openclaw onboard (non-interactive) …"
+    say "Running openclaw onboard …"
 
-    local -a cmd=("$OPENCLAW_BIN" onboard --non-interactive --accept-risk)
+    # For source builds run through pnpm so the locally-built binary is used.
+    # For package installs use the resolved binary directly.
+    local -a cmd
+    if [[ ("$INSTALL_METHOD" == "source" || "$INSTALL_METHOD" == "git") && -n "$REPO_ROOT" ]]; then
+        cd "$REPO_ROOT"
+        cmd=(pnpm openclaw onboard --non-interactive --accept-risk)
+    else
+        cmd=($OPENCLAW_BIN onboard --non-interactive --accept-risk)
+    fi
 
     # flow + mode
     cmd+=(--flow "$ONBOARD_FLOW" --mode local)
@@ -564,7 +643,7 @@ run_onboard() {
         cmd+=(--gateway-password "$GW_PASSWORD")
     fi
 
-    # daemon
+    # daemon — always install for source builds; honour JSON for package builds
     if [[ "$ONBOARD_INSTALL_DAEMON" == "true" ]]; then
         cmd+=(--install-daemon --daemon-runtime node)
     else
@@ -611,6 +690,11 @@ run_onboard() {
     # channels are set up separately below; always skip in onboard
     cmd+=(--skip-channels)
 
+    # Print the command so the user can see / replay it
+    echo ""
+    say "Command: ${cmd[*]}"
+    echo ""
+
     if [[ "$VERBOSE" == "1" ]]; then
         "${cmd[@]}"
     else
@@ -621,7 +705,7 @@ run_onboard() {
 
     # Post-onboard: Ollama base URL (cannot be set via onboard flags)
     if [[ "${PROVIDER_AUTH_CHOICE}" == "skip" && -n "$OLLAMA_BASE_URL" ]]; then
-        "$OPENCLAW_BIN" config set models.providers.ollama.baseUrl "$OLLAMA_BASE_URL" 2>/dev/null \
+        $OPENCLAW_BIN config set models.providers.ollama.baseUrl "$OLLAMA_BASE_URL" 2>/dev/null \
             && ok "ollama.baseUrl = ${OLLAMA_BASE_URL}" \
             || warn "Could not set ollama baseUrl; run: openclaw config set models.providers.ollama.baseUrl ${OLLAMA_BASE_URL}"
     fi
@@ -630,6 +714,16 @@ run_onboard() {
 run_onboard
 
 # ── PART C: add channels ──────────────────────────────────────────────────────
+
+# Helper: run openclaw via pnpm (source) or directly (package)
+run_openclaw() {
+    if [[ ("$INSTALL_METHOD" == "source" || "$INSTALL_METHOD" == "git") && -n "$REPO_ROOT" ]]; then
+        (cd "$REPO_ROOT" && pnpm openclaw "$@")
+    else
+        $OPENCLAW_BIN "$@"
+    fi
+}
+
 setup_channels() {
     if [[ "$NO_CHANNELS" == "1" ]]; then
         say "Skipping channels (--no-channels)"
@@ -647,7 +741,7 @@ setup_channels() {
             TG_TOKEN="$(ask_secret "Telegram bot token (from @BotFather)")"
         fi
         if [[ -n "$TG_TOKEN" ]]; then
-            "$OPENCLAW_BIN" channels add --channel telegram --token "$TG_TOKEN" \
+            run_openclaw channels add --channel telegram --token "$TG_TOKEN" \
                 && ok "Telegram channel added" \
                 || warn "Telegram channel add failed; run: openclaw channels add --channel telegram --token <token>"
         else
@@ -660,7 +754,7 @@ setup_channels() {
             DC_TOKEN="$(ask_secret "Discord bot token")"
         fi
         if [[ -n "$DC_TOKEN" ]]; then
-            "$OPENCLAW_BIN" channels add --channel discord --token "$DC_TOKEN" \
+            run_openclaw channels add --channel discord --token "$DC_TOKEN" \
                 && ok "Discord channel added" \
                 || warn "Discord channel add failed; run: openclaw channels add --channel discord --token <token>"
         else
@@ -676,7 +770,7 @@ setup_channels() {
             SL_APP_TOKEN="$(ask_secret "Slack app token (xapp-...)")"
         fi
         if [[ -n "$SL_BOT_TOKEN" && -n "$SL_APP_TOKEN" ]]; then
-            "$OPENCLAW_BIN" channels add --channel slack \
+            run_openclaw channels add --channel slack \
                 --bot-token "$SL_BOT_TOKEN" --app-token "$SL_APP_TOKEN" \
                 && ok "Slack channel added" \
                 || warn "Slack channel add failed"
@@ -690,7 +784,7 @@ setup_channels() {
             SG_NUMBER="$(ask "Signal phone number (e.g. +12025551234)")"
         fi
         if [[ -n "$SG_NUMBER" ]]; then
-            "$OPENCLAW_BIN" channels add --channel signal \
+            run_openclaw channels add --channel signal \
                 --signal-number "$SG_NUMBER" --http-url "$SG_HTTP_URL" \
                 && ok "Signal channel added" \
                 || warn "Signal channel add failed"
@@ -710,7 +804,7 @@ setup_channels() {
             MX_ACCESS_TOKEN="$(ask_secret "Matrix access token")"
         fi
         if [[ -n "$MX_HOMESERVER" && -n "$MX_USER_ID" && -n "$MX_ACCESS_TOKEN" ]]; then
-            "$OPENCLAW_BIN" channels add --channel matrix \
+            run_openclaw channels add --channel matrix \
                 --homeserver "$MX_HOMESERVER" \
                 --user-id    "$MX_USER_ID" \
                 --access-token "$MX_ACCESS_TOKEN" \
@@ -738,7 +832,7 @@ setup_plugins() {
         for spec in "${PLUGINS_INSTALL[@]}"; do
             [[ -z "$spec" ]] && continue
             say "Installing plugin: ${spec}"
-            if "$OPENCLAW_BIN" plugins install "$spec"; then
+            if run_openclaw plugins install "$spec"; then
                 ok "Plugin installed: ${spec}"
             else
                 warn "Plugin install failed: ${spec} — run manually: openclaw plugins install ${spec}"
@@ -752,7 +846,7 @@ setup_plugins() {
         for pid in "${PLUGINS_ENABLE[@]}"; do
             [[ -z "$pid" ]] && continue
             say "Enabling plugin: ${pid}"
-            if "$OPENCLAW_BIN" plugins enable "$pid"; then
+            if run_openclaw plugins enable "$pid"; then
                 ok "Plugin enabled: ${pid}"
             else
                 warn "Plugin enable failed: ${pid} — run manually: openclaw plugins enable ${pid}"
@@ -905,17 +999,33 @@ echo ""
 echo -e "${SUCCESS}${BOLD}  🦞 OpenClaw is ready!${NC}"
 echo ""
 
-say "Start gateway  :  openclaw gateway run"
+if [[ "$GW_AUTH_MODE" == "token" && -n "$GW_TOKEN" ]]; then
+    echo -e "${WARN}${BOLD}  Your gateway token (save this):${NC}"
+    echo -e "  ${BOLD}${GW_TOKEN}${NC}"
+    echo ""
+fi
+
+echo -e "${ACCENT}${BOLD}  Useful commands:${NC}"
+echo ""
+
+if [[ ("$INSTALL_METHOD" == "source" || "$INSTALL_METHOD" == "git") && -n "$REPO_ROOT" ]]; then
+    _cd_hint="cd ${REPO_ROOT}"
+    echo -e "  ${BOLD}${_cd_hint}${NC}"
+    echo ""
+    say "Dev loop (auto-reload on source/config changes):"
+    echo -e "  ${BOLD}pnpm gateway:watch${NC}"
+    echo ""
+    say "Other dev commands:"
+    echo -e "  ${INFO}pnpm dev${NC}                      # run node without watching"
+    echo -e "  ${INFO}pnpm gateway:dev${NC}              # gateway only, skip channels"
+    echo -e "  ${INFO}pnpm gateway:dev:reset${NC}        # gateway + reset state"
+else
+    say "Start gateway  :  openclaw gateway run"
+fi
+
 say "Check status   :  openclaw channels status --probe"
 say "Web UI         :  openclaw dashboard"
 say "Docs           :  https://docs.openclaw.ai"
-
-if [[ "$GW_AUTH_MODE" == "token" && -n "$GW_TOKEN" ]]; then
-    echo ""
-    echo -e "${WARN}${BOLD}  Your gateway token (save this):${NC}"
-    echo -e "  ${BOLD}${GW_TOKEN}${NC}"
-fi
-
 echo ""
 
 

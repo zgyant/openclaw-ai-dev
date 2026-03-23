@@ -5,16 +5,20 @@
 #   curl -fsSL https://raw.githubusercontent.com/zgyant/openclaw-ai-dev/main/setup.sh | bash
 #
 # What this script does:
-#   1. Downloads install.json (config template) to your current directory
-#   2. Downloads easy-install.sh to a temp location
-#   3. Pauses so you can edit install.json with your API keys and settings
-#   4. Waits for you to press Y, then runs the full installer
+#   1. Clones https://github.com/zgyant/openclaw-ai-dev (or updates it if already present)
+#   2. Runs pnpm install, pnpm ui:build, pnpm build inside the repo
+#   3. Creates install.json from the template if it doesn't exist yet
+#   4. Pauses so you can fill in your API keys and settings
+#   5. Waits for Y, then runs easy-install.sh which feeds the JSON into
+#      `pnpm openclaw onboard --install-daemon` and configures channels/plugins/dev-agent
+#   6. Prints the dev-loop command: pnpm gateway:watch
 #
-# Tip: re-run at any time — it skips re-downloading if install.json already exists.
+# Tip: re-run at any time — git pull + rebuild are skipped when nothing changed.
 
 set -euo pipefail
 
-REPO_RAW="https://raw.githubusercontent.com/zgyant/openclaw-ai-dev/main"
+REPO_URL="https://github.com/zgyant/openclaw-ai-dev.git"
+REPO_DIR="${PWD}/openclaw-ai-dev"
 
 # ── colors ───────────────────────────────────────────────────────────────────
 BOLD='\033[1m'
@@ -28,7 +32,7 @@ NC='\033[0m'
 
 say()     { echo -e "${MUTED}·${NC} $*"; }
 ok()      { echo -e "${SUCCESS}✓${NC} $*"; }
-warn()    { echo -e "${WARN}!${NC} $*"; }
+warn()    { echo -e "${WARN}!${NC} $*" >&2; }
 err()     { echo -e "${ERROR}✗${NC} $*" >&2; }
 hint()    { echo -e "${INFO}  $*${NC}"; }
 section() { echo -e "\n${ACCENT}${BOLD}$*${NC}"; }
@@ -40,54 +44,85 @@ banner() {
     echo ""
 }
 
-# ── download helper (curl or wget) ───────────────────────────────────────────
-download() {
-    local url="$1" dest="$2"
-    if command -v curl &>/dev/null; then
-        curl -fsSL "$url" -o "$dest"
-    elif command -v wget &>/dev/null; then
-        wget -qO "$dest" "$url"
+# ── TTY helpers ───────────────────────────────────────────────────────────────
+is_tty() { [[ -r /dev/tty && -w /dev/tty ]]; }
+
+confirm_yn() {
+    # $1 = prompt, $2 = default (y|n)
+    local prompt="$1" default="${2:-n}"
+    if is_tty; then
+        while true; do
+            printf "%b  %s (y/n) [%s]: %b" "${INFO}" "$prompt" "$default" "${NC}" >/dev/tty
+            read -r _a </dev/tty || _a=""
+            _a="${_a:-$default}"
+            case "${_a,,}" in
+                y|yes) return 0 ;;
+                n|no)  return 1 ;;
+                *)     warn "Please enter Y or N." ;;
+            esac
+        done
     else
-        err "Neither curl nor wget found. Install one and try again."
-        exit 1
+        [[ "${default,,}" == "y" ]]
     fi
 }
 
 banner
 
-INSTALL_JSON="${PWD}/install.json"
-EASY_INSTALL_TMP="$(mktemp /tmp/easy-install-XXXXXX.sh)"
-EASY_INSTALL_SAVED="${PWD}/easy-install.sh"
+# ── Step 1: clone or update ───────────────────────────────────────────────────
+section "Step 1/4  Source"
 
-# Clean up temp on exit (but keep the saved copy)
-trap 'rm -f "$EASY_INSTALL_TMP"' EXIT
+if [[ -d "${REPO_DIR}/.git" ]]; then
+    ok "Repo already exists — pulling latest …"
+    git -C "$REPO_DIR" pull --ff-only
+else
+    say "Cloning ${REPO_URL} …"
+    git clone "$REPO_URL" "$REPO_DIR"
+    ok "Cloned to: ${REPO_DIR}"
+fi
 
-# ── Step 1: get install.json ──────────────────────────────────────────────────
-section "Step 1/3  Config"
+cd "$REPO_DIR"
+
+# ── Step 2: build ─────────────────────────────────────────────────────────────
+section "Step 2/4  Build"
+
+# Ensure pnpm is available
+if ! command -v pnpm &>/dev/null; then
+    warn "pnpm not found — installing via npm …"
+    npm install -g pnpm@10 2>/dev/null || {
+        err "Could not install pnpm. Install it manually: https://pnpm.io/installation"
+        exit 1
+    }
+    hash -r 2>/dev/null || true
+fi
+
+say "pnpm install …"
+pnpm install --frozen-lockfile
+
+say "pnpm ui:build  (auto-installs UI deps on first run) …"
+pnpm ui:build
+
+say "pnpm build …"
+pnpm build
+
+ok "Build complete"
+
+# ── Step 3: config ────────────────────────────────────────────────────────────
+section "Step 3/4  Configure"
+
+INSTALL_JSON="${REPO_DIR}/install.json"
+TEMPLATE_JSON="${REPO_DIR}/scripts/install.template.json"
 
 if [[ -f "$INSTALL_JSON" ]]; then
     ok "install.json already exists — using it"
     say "  ${INSTALL_JSON}"
 else
-    say "Downloading install.json template …"
-    download "${REPO_RAW}/scripts/install.template.json" "$INSTALL_JSON"
+    if [[ ! -f "$TEMPLATE_JSON" ]]; then
+        err "Template not found: ${TEMPLATE_JSON}"
+        exit 1
+    fi
+    cp "$TEMPLATE_JSON" "$INSTALL_JSON"
     ok "Created: ${INSTALL_JSON}"
 fi
-
-# ── Step 2: get easy-install.sh ───────────────────────────────────────────────
-section "Step 2/3  Installer"
-
-say "Downloading easy-install.sh …"
-download "${REPO_RAW}/scripts/easy-install.sh" "$EASY_INSTALL_TMP"
-chmod +x "$EASY_INSTALL_TMP"
-
-# Save a permanent copy next to install.json so the user can re-run later
-cp "$EASY_INSTALL_TMP" "$EASY_INSTALL_SAVED"
-chmod +x "$EASY_INSTALL_SAVED"
-ok "Installer saved: ${EASY_INSTALL_SAVED}"
-
-# ── Step 3: edit + confirm ────────────────────────────────────────────────────
-section "Step 3/3  Configure & Run"
 
 echo ""
 echo -e "${WARN}${BOLD}  Open install.json and fill in your details before continuing.${NC}"
@@ -101,17 +136,16 @@ echo ""
 hint "Optional: enable channels (telegram, discord, slack…), plugins, dev_agent"
 echo ""
 hint "Edit now:"
-hint "  nano ${INSTALL_JSON}"
-hint "  code ${INSTALL_JSON}     (VS Code)"
-hint "  vim  ${INSTALL_JSON}"
+hint "  nano  ${INSTALL_JSON}"
+hint "  code  ${INSTALL_JSON}   (VS Code)"
+hint "  vim   ${INSTALL_JSON}"
 echo ""
 echo -e "${MUTED}─────────────────────────────────────────────────────────────${NC}"
 echo ""
 
-# Read Y/N from /dev/tty — works even when stdin is the curl pipe
-if [[ -r /dev/tty && -w /dev/tty ]]; then
+if is_tty; then
     while true; do
-        printf "%b  Done editing? Press %bY%b to run the installer, %bN%b to cancel: %b" \
+        printf "%b  Done editing? Press %bY%b to continue, %bN%b to cancel: %b" \
             "$INFO" "$BOLD" "$INFO" "$BOLD" "$INFO" "$NC" >/dev/tty
         read -r _ans </dev/tty || _ans=""
         case "${_ans,,}" in
@@ -123,8 +157,8 @@ if [[ -r /dev/tty && -w /dev/tty ]]; then
                 echo ""
                 say "Cancelled."
                 echo ""
-                hint "When you're ready, run the installer yourself:"
-                hint "  bash ${EASY_INSTALL_SAVED}"
+                hint "When you're ready, re-run:"
+                hint "  cd ${REPO_DIR} && bash scripts/easy-install.sh"
                 echo ""
                 exit 0
                 ;;
@@ -134,12 +168,26 @@ if [[ -r /dev/tty && -w /dev/tty ]]; then
         esac
     done
 else
-    # Headless / CI — no TTY available, proceed automatically
     warn "No TTY detected — proceeding automatically (CI/headless mode)."
     echo ""
 fi
 
-# ── Run the installer ─────────────────────────────────────────────────────────
-# install.json is in $PWD; easy-install.sh searches $PWD first, so it will
-# find it automatically without any extra arguments.
-bash "$EASY_INSTALL_TMP"
+# ── Step 4: install + onboard + dev-loop ──────────────────────────────────────
+section "Step 4/4  Install & Onboard"
+
+bash "${REPO_DIR}/scripts/easy-install.sh"
+
+# ── Post-install: dev-loop hint ───────────────────────────────────────────────
+echo ""
+echo -e "${ACCENT}${BOLD}  Dev loop (auto-reload on source/config changes):${NC}"
+echo ""
+echo -e "  ${BOLD}cd ${REPO_DIR}${NC}"
+echo -e "  ${BOLD}pnpm gateway:watch${NC}"
+echo ""
+hint "Other useful commands:"
+hint "  pnpm dev                   # run the node without file watching"
+hint "  pnpm gateway:dev           # gateway only, skip channels"
+hint "  pnpm gateway:dev:reset     # gateway + reset state"
+hint "  openclaw channels status --probe"
+hint "  openclaw dashboard"
+echo ""
