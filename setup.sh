@@ -85,20 +85,6 @@ cd "$REPO_DIR"
 # ── Step 2: build ─────────────────────────────────────────────────────────────
 section "Step 2/4  Build"
 
-# Check Node version — must be >= 22.16.0
-_node_ver="$(node --version 2>/dev/null | sed 's/^v//' || echo "0")"
-_node_major="$(echo "$_node_ver" | cut -d. -f1)"
-if [[ "$_node_major" -lt 22 ]]; then
-    err "Node.js >= 22.16.0 is required (you have v${_node_ver})"
-    err ""
-    err "Upgrade Node then re-run this script:"
-    err "  nvm install 22 && nvm use 22   # if you use nvm"
-    err "  fnm install 22 && fnm use 22   # if you use fnm"
-    err "  https://nodejs.org/en/download  # direct download"
-    exit 1
-fi
-ok "Node v${_node_ver}"
-
 # Ensure pnpm is available
 if ! command -v pnpm &>/dev/null; then
     warn "pnpm not found — installing via npm …"
