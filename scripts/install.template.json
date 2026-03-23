@@ -1,19 +1,25 @@
 {
   "_readme": [
     "HOW TO USE",
-    "  1. Copy this file:  cp scripts/install.template.json install.json",
-    "  2. Fill in REQUIRED fields (marked REQUIRED below).",
-    "  3. Run:             bash scripts/easy-install.sh",
-    "  That's it — openclaw installs, onboards, configures your AI provider,",
-    "  adds channels, installs plugins, and sets up the dev agent automatically."
+    "  Option A — one command (recommended):",
+    "    curl -fsSL https://raw.githubusercontent.com/zgyant/openclaw-ai-dev/main/setup.sh | bash",
+    "    The script clones the repo, builds it, then pauses here for you to fill in",
+    "    your API keys before running the installer automatically.",
+    "",
+    "  Option B — manual:",
+    "    1. git clone https://github.com/zgyant/openclaw-ai-dev.git && cd openclaw-ai-dev",
+    "    2. cp scripts/install.template.json install.json",
+    "    3. Fill in REQUIRED fields (marked REQUIRED below).",
+    "    4. bash scripts/easy-install.sh",
+    "    5. pnpm gateway:watch   # dev loop — auto-reloads on source/config changes"
   ],
 
   "install": {
-    "_doc": "How openclaw is installed. 'pnpm' and 'npm' install the published package globally. 'git' clones and builds from source.",
-    "method": "pnpm",
-    "_method_options": "pnpm | npm | git",
+    "_doc": "How openclaw is installed. 'source' (default) builds from the cloned repo using pnpm. 'pnpm' and 'npm' install the published package globally. 'git' is an alias for 'source'.",
+    "method": "source",
+    "_method_options": "source (default — build from repo) | pnpm | npm | git",
     "version": "latest",
-    "_version_hint": "A dist-tag (latest, next, beta) or exact semver. Use 'main' for the git HEAD build.",
+    "_version_hint": "Only used for pnpm/npm installs. A dist-tag (latest, next, beta) or exact semver. Ignored for source builds.",
     "beta": false
   },
 
