@@ -55,6 +55,42 @@ err()     { echo -e "${ERROR}✗${NC} $*" >&2; }
 section() { echo -e "\n${ACCENT}${BOLD}$*${NC}"; }
 hint()    { echo -e "${INFO}  $*${NC}"; }
 
+# ── progress bar ──────────────────────────────────────────────────────────────
+# Usage: progress_bar <current_step> <total_steps> <label>
+#   e.g. progress_bar 2 5 "Running onboard"
+# Renders a fixed-width bar like:
+#   [████████░░░░░░░░░░░░]  2/5  Running onboard
+_PB_WIDTH=20
+progress_bar() {
+    local current="$1"
+    local total="$2"
+    local label="${3:-}"
+    # Don't draw when output is not a terminal (CI, pipe, etc.)
+    [[ -t 1 ]] || return 0
+    local filled=$(( current * _PB_WIDTH / total ))
+    local empty=$(( _PB_WIDTH - filled ))
+    local bar=""
+    local i
+    for (( i=0; i<filled; i++ )); do bar+="█"; done
+    for (( i=0; i<empty;  i++ )); do bar+="░"; done
+    printf "\r${ACCENT}[%s]${NC}  %s/%s  %s%-*s" \
+        "$bar" "$current" "$total" "${BOLD}" 30 "$label${NC}"
+    # Move to next line only when complete
+    if [[ "$current" -ge "$total" ]]; then
+        echo ""
+    fi
+}
+
+# Total install steps: build, onboard, channels, plugins, dev-agent
+_PB_TOTAL=5
+_PB_STEP=0
+
+pb_step() {
+    local label="$1"
+    (( _PB_STEP++ )) || true
+    progress_bar "$_PB_STEP" "$_PB_TOTAL" "$label"
+}
+
 banner() {
     echo ""
     echo -e "${ACCENT}${BOLD}  🦞 OpenClaw Easy Setup${NC}"
@@ -514,13 +550,13 @@ build_from_source() {
         hash -r 2>/dev/null || true
     fi
 
-    say "pnpm install …"
-    pnpm install --frozen-lockfile
+    say "pnpm install …  (this may take a minute)"
+    pnpm install --frozen-lockfile --ignore-scripts=false
 
-    say "pnpm ui:build  (auto-installs UI deps on first run) …"
+    say "pnpm ui:build …  (installs UI deps + runs Vite build, may take a minute)"
     pnpm ui:build
 
-    say "pnpm build …"
+    say "pnpm build …  (TypeScript compile + bundle)"
     pnpm build
 
     ok "Source build complete"
@@ -564,6 +600,7 @@ install_openclaw_package() {
     ok "openclaw package installed"
 }
 
+pb_step "Installing openclaw"
 if ! install_openclaw_package; then
     err "openclaw install failed"
     exit 1
@@ -711,6 +748,7 @@ run_onboard() {
     fi
 }
 
+pb_step "Running onboard"
 run_onboard
 
 # ── PART C: add channels ──────────────────────────────────────────────────────
@@ -816,6 +854,7 @@ setup_channels() {
     fi
 }
 
+pb_step "Configuring channels"
 setup_channels
 
 # ── PART D: install and enable plugins ───────────────────────────────────────
@@ -860,6 +899,7 @@ setup_plugins() {
     fi
 }
 
+pb_step "Installing/enabling plugins"
 setup_plugins
 
 # ── PART E: configure dev agent ──────────────────────────────────────────────
@@ -990,6 +1030,7 @@ PYEOF
 }
 
 export INSTANCES_FILE="${HOME}/.openclaw/dev-agent-instances.json"
+pb_step "Configuring dev agent"
 setup_dev_agent
 
 # ─────────────────────────────────────────────────────────────────────────────

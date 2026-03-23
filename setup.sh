@@ -95,13 +95,13 @@ if ! command -v pnpm &>/dev/null; then
     hash -r 2>/dev/null || true
 fi
 
-say "pnpm install …"
-pnpm install --frozen-lockfile
+say "pnpm install …  (this may take a minute)"
+pnpm install --frozen-lockfile --ignore-scripts=false
 
-say "pnpm ui:build  (auto-installs UI deps on first run) …"
+say "pnpm ui:build …  (installs UI deps + Vite build, may take a minute)"
 pnpm ui:build
 
-say "pnpm build …"
+say "pnpm build …  (TypeScript compile + bundle)"
 pnpm build
 
 ok "Build complete"
