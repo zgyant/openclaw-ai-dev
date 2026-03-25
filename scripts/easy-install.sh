@@ -157,82 +157,136 @@ if [[ "$HELP" == "1" ]]; then
 fi
 
 # ── JSON reading helpers ──────────────────────────────────────────────────────
-# Requires node (present before install on most systems) with python3 fallback.
-json_get() {
+# Reads $file with jq (fastest), node, or python3.
+# All three helpers receive file path + key purely through process arguments /
+# native file-open calls — never inside an eval'd string — so Windows/Git-Bash
+# POSIX paths, spaces, and special characters all work correctly.
+
+# Internal: read a scalar.  Exits 0 + prints value if found, exits 1 if not.
+_json_get_value() {
     local file="$1"
     local dotkey="$2"
-    local default="${3:-}"
 
-    if command -v node &>/dev/null; then
-        node -e "
-try {
-  const o = JSON.parse(require('fs').readFileSync('${file}', 'utf8'));
-  const keys = '${dotkey}'.split('.');
-  let v = o;
-  for (const k of keys) { v = (v && typeof v === 'object') ? v[k] : undefined; }
-  if (v !== undefined && v !== null && v !== '') process.stdout.write(String(v));
-} catch(e) {}
-" 2>/dev/null && return 0
+    # ── jq ────────────────────────────────────────────────────────────────────
+    if command -v jq &>/dev/null; then
+        local val
+        val="$(jq -r ".${dotkey} // empty" "$file" 2>/dev/null)"
+        if [[ -n "$val" && "$val" != "null" ]]; then
+            printf '%s' "$val"; return 0
+        fi
+        return 1
     fi
 
+    # ── node ──────────────────────────────────────────────────────────────────
+    # Write a tiny JS helper to a temp file so there are no heredoc/stdin
+    # conflicts on any platform (Git Bash, macOS, Linux).
+    if command -v node &>/dev/null; then
+        local _tmp _val _rc
+        _tmp="$(mktemp /tmp/ocjson.XXXXXX.js 2>/dev/null || mktemp)"
+        cat >"$_tmp" <<'JSEOF'
+var fs=require('fs');
+var file=process.argv[2], key=process.argv[3];
+try {
+  var v=JSON.parse(fs.readFileSync(file,'utf8'));
+  key.split('.').forEach(function(k){ v=(v!=null&&typeof v==='object')?v[k]:undefined; });
+  if(v!==undefined&&v!==null&&String(v)!==''){process.stdout.write(String(v));process.exit(0);}
+} catch(e){}
+process.exit(1);
+JSEOF
+        _val="$(node "$_tmp" "$file" "$dotkey" 2>/dev/null)"; _rc=$?
+        rm -f "$_tmp"
+        if [[ $_rc -eq 0 && -n "$_val" ]]; then printf '%s' "$_val"; return 0; fi
+        return 1
+    fi
+
+    # ── python3 ───────────────────────────────────────────────────────────────
     if command -v python3 &>/dev/null; then
-        python3 -c "
+        local _tmp _val _rc
+        _tmp="$(mktemp /tmp/ocjson.XXXXXX.py 2>/dev/null || mktemp)"
+        cat >"$_tmp" <<'PYEOF'
 import json, sys
 try:
-    with open('${file}') as f:
-        o = json.load(f)
-    v = o
-    for k in '${dotkey}'.split('.'):
+    with open(sys.argv[1], encoding='utf-8') as f:
+        v = json.load(f)
+    for k in sys.argv[2].split('.'):
         v = v.get(k) if isinstance(v, dict) else None
-    if v is not None and v != '':
-        print(v, end='')
-except:
+    if v is not None and str(v) != '':
+        print(v, end=''); sys.exit(0)
+except Exception:
     pass
-" 2>/dev/null && return 0
+sys.exit(1)
+PYEOF
+        _val="$(python3 "$_tmp" "$file" "$dotkey" 2>/dev/null)"; _rc=$?
+        rm -f "$_tmp"
+        if [[ $_rc -eq 0 && -n "$_val" ]]; then printf '%s' "$_val"; return 0; fi
+        return 1
     fi
 
-    echo "$default"
+    return 1
 }
 
-# Returns 0 (true) if a JSON boolean/truthy field is true/1/"true"
+json_get() {
+    local file="$1" dotkey="$2" default="${3:-}"
+    local val
+    if val="$(_json_get_value "$file" "$dotkey")"; then
+        printf '%s\n' "$val"
+    else
+        printf '%s\n' "$default"
+    fi
+}
+
+# Returns 0 (true) if the JSON field is true / "true" / 1
 json_bool() {
     local val
     val="$(json_get "$1" "$2" "false")"
     [[ "$val" == "true" || "$val" == "1" ]]
 }
 
-# Returns a bash array populated from a JSON string array field
-# Usage: readarray -t MY_ARR < <(json_array "$file" "plugins.install")
+# Prints one array element per line; skips entries starting with "_"
 json_array() {
-    local file="$1"
-    local dotkey="$2"
+    local file="$1" dotkey="$2"
+    local _tmp
+
+    if command -v jq &>/dev/null; then
+        jq -r ".${dotkey} // [] | .[] | select(. != null and (tostring | startswith(\"_\") | not))" \
+            "$file" 2>/dev/null
+        return
+    fi
 
     if command -v node &>/dev/null; then
-        node -e "
+        _tmp="$(mktemp /tmp/ocjson.XXXXXX.js 2>/dev/null || mktemp)"
+        cat >"$_tmp" <<'JSEOF'
+var fs=require('fs');
+var file=process.argv[2], key=process.argv[3];
 try {
-  const o = JSON.parse(require('fs').readFileSync('${file}', 'utf8'));
-  const keys = '${dotkey}'.split('.');
-  let v = o;
-  for (const k of keys) { v = (v && typeof v === 'object') ? v[k] : undefined; }
-  if (Array.isArray(v)) v.forEach(x => { if (x && !String(x).startsWith('_')) console.log(x); });
-} catch(e) {}
-" 2>/dev/null
-    elif command -v python3 &>/dev/null; then
-        python3 -c "
-import json
+  var v=JSON.parse(fs.readFileSync(file,'utf8'));
+  key.split('.').forEach(function(k){ v=(v!=null&&typeof v==='object')?v[k]:undefined; });
+  if(Array.isArray(v)) v.forEach(function(x){ if(x&&!String(x).startsWith('_')) console.log(x); });
+} catch(e){}
+JSEOF
+        node "$_tmp" "$file" "$dotkey" 2>/dev/null
+        rm -f "$_tmp"
+        return
+    fi
+
+    if command -v python3 &>/dev/null; then
+        _tmp="$(mktemp /tmp/ocjson.XXXXXX.py 2>/dev/null || mktemp)"
+        cat >"$_tmp" <<'PYEOF'
+import json, sys
 try:
-    with open('${file}') as f:
-        o = json.load(f)
-    v = o
-    for k in '${dotkey}'.split('.'):
+    with open(sys.argv[1], encoding='utf-8') as f:
+        v = json.load(f)
+    for k in sys.argv[2].split('.'):
         v = v.get(k) if isinstance(v, dict) else None
     if isinstance(v, list):
         for x in v:
             if x and not str(x).startswith('_'):
                 print(x)
-except:
+except Exception:
     pass
-" 2>/dev/null
+PYEOF
+        python3 "$_tmp" "$file" "$dotkey" 2>/dev/null
+        rm -f "$_tmp"
     fi
 }
 
@@ -422,7 +476,6 @@ normalize_auth_choice() {
 PROVIDER_AUTH_CHOICE="$(normalize_auth_choice "${PROVIDER_AUTH_CHOICE:-openai-api-key}")"
 
 # ── interactive gap-fill: required fields ─────────────────────────────────────
-section "Step 1/4  AI provider"
 
 if [[ -z "$PROVIDER_API_KEY" && "$PROVIDER_AUTH_CHOICE" != "skip" && \
       "$PROVIDER_AUTH_CHOICE" != "github-copilot" && "$PROVIDER_AUTH_CHOICE" != "opencode-zen" ]]; then
@@ -607,12 +660,16 @@ if ! install_openclaw_package; then
 fi
 
 # ── resolve openclaw binary ───────────────────────────────────────────────────
+# OPENCLAW_CMD is an array so paths with spaces and the "node foo.mjs" two-token
+# case are both handled correctly.  Use it as:  "${OPENCLAW_CMD[@]}" <args>
 OPENCLAW_BIN=""
+OPENCLAW_CMD=()
 hash -r 2>/dev/null || true
 
 for _attempt in 1 2; do
     if command -v openclaw &>/dev/null; then
         OPENCLAW_BIN="$(command -v openclaw)"
+        OPENCLAW_CMD=("$OPENCLAW_BIN")
         break
     fi
     # For source builds, prefer the local repo's pnpm-managed binary or openclaw.mjs
@@ -621,10 +678,11 @@ for _attempt in 1 2; do
         _local_mjs="${REPO_ROOT}/openclaw.mjs"
         if [[ -x "$_local_bin" ]]; then
             OPENCLAW_BIN="$_local_bin"
+            OPENCLAW_CMD=("$OPENCLAW_BIN")
             break
         elif [[ -f "$_local_mjs" ]]; then
-            # Wrap in a small shim so the rest of the script calls it uniformly
-            OPENCLAW_BIN="node ${_local_mjs}"
+            OPENCLAW_BIN="$_local_mjs"
+            OPENCLAW_CMD=(node "$_local_mjs")
             break
         fi
     fi
@@ -637,6 +695,7 @@ for _attempt in 1 2; do
         "$HOME/.npm-global/bin"; do
         if [[ -n "$_dir" && -x "${_dir}/openclaw" ]]; then
             OPENCLAW_BIN="${_dir}/openclaw"
+            OPENCLAW_CMD=("$OPENCLAW_BIN")
             export PATH="${_dir}:${PATH}"
             hash -r 2>/dev/null || true
             break 2
@@ -663,7 +722,7 @@ run_onboard() {
         cd "$REPO_ROOT"
         cmd=(pnpm openclaw onboard --non-interactive --accept-risk)
     else
-        cmd=($OPENCLAW_BIN onboard --non-interactive --accept-risk)
+        cmd=("${OPENCLAW_CMD[@]}" onboard --non-interactive --accept-risk)
     fi
 
     # flow + mode
@@ -716,7 +775,8 @@ run_onboard() {
     esac
 
     # model override
-    [[ -n "$PROVIDER_MODEL" ]] && cmd+=(--default-model "$PROVIDER_MODEL")
+    # Note: --default-model does not exist in openclaw onboard; the model is
+    # applied post-onboard via  config set agents.defaults.model.primary  below.
 
     # skip flags
     [[ "$ONBOARD_SKIP_SKILLS" == "true" ]] && cmd+=(--skip-skills)
@@ -740,9 +800,16 @@ run_onboard() {
 
     ok "Onboarding complete"
 
+    # Post-onboard: set default model if specified in config
+    if [[ -n "$PROVIDER_MODEL" ]]; then
+        "${OPENCLAW_CMD[@]}" config set agents.defaults.model.primary "$PROVIDER_MODEL" 2>/dev/null \
+            && ok "Default model set to: ${PROVIDER_MODEL}" \
+            || warn "Could not set default model; run: openclaw config set agents.defaults.model.primary ${PROVIDER_MODEL}"
+    fi
+
     # Post-onboard: Ollama base URL (cannot be set via onboard flags)
     if [[ "${PROVIDER_AUTH_CHOICE}" == "skip" && -n "$OLLAMA_BASE_URL" ]]; then
-        $OPENCLAW_BIN config set models.providers.ollama.baseUrl "$OLLAMA_BASE_URL" 2>/dev/null \
+        "${OPENCLAW_CMD[@]}" config set models.providers.ollama.baseUrl "$OLLAMA_BASE_URL" 2>/dev/null \
             && ok "ollama.baseUrl = ${OLLAMA_BASE_URL}" \
             || warn "Could not set ollama baseUrl; run: openclaw config set models.providers.ollama.baseUrl ${OLLAMA_BASE_URL}"
     fi
@@ -758,7 +825,7 @@ run_openclaw() {
     if [[ ("$INSTALL_METHOD" == "source" || "$INSTALL_METHOD" == "git") && -n "$REPO_ROOT" ]]; then
         (cd "$REPO_ROOT" && pnpm openclaw "$@")
     else
-        $OPENCLAW_BIN "$@"
+        "${OPENCLAW_CMD[@]}" "$@"
     fi
 }
 
@@ -1034,39 +1101,87 @@ pb_step "Configuring dev agent"
 setup_dev_agent
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Done
+# Start gateway + UI in separate terminals
 # ─────────────────────────────────────────────────────────────────────────────
-echo ""
-echo -e "${SUCCESS}${BOLD}  🦞 OpenClaw is ready!${NC}"
-echo ""
-
-if [[ "$GW_AUTH_MODE" == "token" && -n "$GW_TOKEN" ]]; then
-    echo -e "${WARN}${BOLD}  Your gateway token (save this):${NC}"
-    echo -e "  ${BOLD}${GW_TOKEN}${NC}"
+start_dev_servers() {
     echo ""
-fi
+    echo -e "${ACCENT}${BOLD}  🚀 Launching gateway and UI…${NC}"
 
-echo -e "${ACCENT}${BOLD}  Useful commands:${NC}"
-echo ""
+    local work_dir="${REPO_ROOT:-$PWD}"
+    local win_dir
+    win_dir="$(cd "$work_dir" && pwd -W 2>/dev/null || cygpath -w "$work_dir" 2>/dev/null || echo "$work_dir")"
 
-if [[ ("$INSTALL_METHOD" == "source" || "$INSTALL_METHOD" == "git") && -n "$REPO_ROOT" ]]; then
-    _cd_hint="cd ${REPO_ROOT}"
-    echo -e "  ${BOLD}${_cd_hint}${NC}"
+    # ── helper: open a new terminal window running a pnpm script ─────────────
+    _open_terminal() {
+        local title="$1"
+        local script="$2"
+        # Windows — open a new console running Git Bash so inline env vars work
+        if command -v cmd.exe &>/dev/null; then
+            local bash_exe
+            # Find the Git Bash executable
+            if [[ -x "/c/Program Files/Git/bin/bash.exe" ]]; then
+                bash_exe="C:\\Program Files\\Git\\bin\\bash.exe"
+            elif [[ -x "/c/Program Files (x86)/Git/bin/bash.exe" ]]; then
+                bash_exe="C:\\Program Files (x86)\\Git\\bin\\bash.exe"
+            else
+                bash_exe="bash.exe"
+            fi
+            cmd.exe /c "start \"${title}\" /D \"${win_dir}\" \"${bash_exe}\" --login -i -c \"cd '${work_dir}' && pnpm run ${script}; exec bash\""
+        # macOS
+        elif command -v osascript &>/dev/null; then
+            osascript -e "tell application \"Terminal\" to do script \"cd '${work_dir}' && pnpm run ${script}\""
+        # Linux — try common terminal emulators
+        elif command -v gnome-terminal &>/dev/null; then
+            gnome-terminal --title="$title" -- bash -c "cd '${work_dir}' && pnpm run ${script}; exec bash"
+        elif command -v xterm &>/dev/null; then
+            xterm -title "$title" -e bash -c "cd '${work_dir}' && pnpm run ${script}; exec bash" &
+        else
+            warn "Could not open a new terminal for '${script}'. Run it manually: pnpm run ${script}"
+            return 1
+        fi
+    }
+
+    # Open gateway:dev first, then ui:dev
+    if _open_terminal "OpenClaw Gateway" "gateway:dev"; then
+        ok "Gateway terminal launched  (pnpm run gateway:dev)"
+    fi
+
+    # Small pause so the two windows don't race to the same stdout
+    sleep 1
+
+    if _open_terminal "OpenClaw UI" "ui:dev"; then
+        ok "UI terminal launched        (pnpm run ui:dev)"
+    fi
+
+    local ui_url="http://localhost:${GW_PORT:-19000}"
+
     echo ""
-    say "Dev loop (auto-reload on source/config changes):"
-    echo -e "  ${BOLD}pnpm gateway:watch${NC}"
+    echo -e "${SUCCESS}${BOLD}  🦞 OpenClaw is ready!${NC}"
     echo ""
-    say "Other dev commands:"
-    echo -e "  ${INFO}pnpm dev${NC}                      # run node without watching"
-    echo -e "  ${INFO}pnpm gateway:dev${NC}              # gateway only, skip channels"
-    echo -e "  ${INFO}pnpm gateway:dev:reset${NC}        # gateway + reset state"
-else
-    say "Start gateway  :  openclaw gateway run"
-fi
+    echo -e "  ${BOLD}Gateway${NC}  →  ${INFO}${ui_url}${NC}"
+    echo ""
 
-say "Check status   :  openclaw channels status --probe"
-say "Web UI         :  openclaw dashboard"
-say "Docs           :  https://docs.openclaw.ai"
-echo ""
+    if [[ "$GW_AUTH_MODE" == "token" && -n "$GW_TOKEN" ]]; then
+        echo -e "  ${WARN}${BOLD}Gateway token (save this):${NC}"
+        echo -e "  ${BOLD}${GW_TOKEN}${NC}"
+        echo ""
+    fi
+
+    echo -e "${ACCENT}${BOLD}  Useful commands (run in Git Bash):${NC}"
+    echo ""
+    echo -e "  ${INFO}pnpm run gateway:dev${NC}          # gateway"
+    echo -e "  ${INFO}pnpm run ui:dev${NC}               # UI dev server"
+    echo -e "  ${INFO}pnpm run gateway:dev:reset${NC}    # gateway + reset state"
+    echo ""
+    echo -e "${ACCENT}${BOLD}  If running from PowerShell, use Git Bash:${NC}"
+    echo -e "  ${BOLD}& 'C:\\Program Files\\Git\\bin\\bash.exe' --login -i -c 'pnpm run gateway:dev'${NC}"
+    echo -e "  ${BOLD}& 'C:\\Program Files\\Git\\bin\\bash.exe' --login -i -c 'pnpm run ui:dev'${NC}"
+    echo ""
+    say "Check status   :  openclaw channels status --probe"
+    say "Docs           :  https://docs.openclaw.ai"
+    echo ""
+}
+
+start_dev_servers
 
 
